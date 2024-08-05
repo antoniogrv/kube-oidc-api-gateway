@@ -1,0 +1,1855 @@
+apiVersion: v1
+data:
+  evp.lua: "local ffi = require \"ffi\"\nlocal ffi_copy = ffi.copy\nlocal ffi_gc =
+    ffi.gc\nlocal ffi_new = ffi.new\nlocal ffi_string = ffi.string\nlocal ffi_cast
+    = ffi.cast\nlocal _C = ffi.C\n\nlocal _M = { _VERSION = \"0.2.3\" }\n\nlocal ngx
+    = ngx\n\n\nlocal CONST = {\n    SHA256_DIGEST = \"SHA256\",\n    SHA512_DIGEST
+    = \"SHA512\",\n    -- ref : https://github.com/openssl/openssl/blob/master/include/openssl/rsa.h\n
+    \   RSA_PKCS1_PADDING = 1,\n    RSA_SSLV23_PADDING = 2,\n    RSA_NO_PADDING =
+    3,\n    RSA_PKCS1_OAEP_PADDING = 4,\n    RSA_X931_PADDING = 5,\n    RSA_PKCS1_PSS_PADDING
+    = 6,\n    -- ref : https://github.com/openssl/openssl/blob/master/include/openssl/evp.h\n
+    \   NID_rsaEncryption = 6,\n    EVP_PKEY_RSA = 6,\n    EVP_PKEY_ALG_CTRL = 0x1000,\n
+    \   EVP_PKEY_CTRL_RSA_PADDING = 0x1000 + 1,\n\n    EVP_PKEY_OP_TYPE_CRYPT = 768,\n
+    \   EVP_PKEY_CTRL_RSA_OAEP_MD = 0x1000 + 9\n}\n_M.CONST = CONST\n\n\n-- Reference:
+    https://wiki.openssl.org/index.php/EVP_Signing_and_Verifying\nffi.cdef[[\n// Error
+    handling\nunsigned long ERR_get_error(void);\nconst char * ERR_reason_error_string(unsigned
+    long e);\n\n// Basic IO\ntypedef struct bio_st BIO;\ntypedef struct bio_method_st
+    BIO_METHOD;\nBIO_METHOD *BIO_s_mem(void);\nBIO * BIO_new(BIO_METHOD *type);\nint\tBIO_puts(BIO
+    *bp,const char *buf);\nvoid BIO_vfree(BIO *a);\nint    BIO_write(BIO *b, const
+    void *buf, int len);\n\n// RSA\ntypedef struct rsa_st RSA;\nint RSA_size(const
+    RSA *rsa);\nvoid RSA_free(RSA *rsa);\ntypedef int pem_password_cb(char *buf, int
+    size, int rwflag, void *userdata);\nRSA * PEM_read_bio_RSAPrivateKey(BIO *bp,
+    RSA **rsa, pem_password_cb *cb,\n\t\t\t\t\t\t\t\tvoid *u);\nRSA * PEM_read_bio_RSAPublicKey(BIO
+    *bp, RSA **rsa, pem_password_cb *cb,\n                                void *u);\n\n//
+    EC_KEY\ntypedef struct ec_key_st EC_KEY;\nvoid EC_KEY_free(EC_KEY *key);\nEC_KEY
+    * PEM_read_bio_ECPrivateKey(BIO *bp, EC_KEY **key, pem_password_cb *cb,\n\t\t\t\t\t\t\t\tvoid
+    *u);\nEC_KEY * PEM_read_bio_ECPublicKey(BIO *bp, EC_KEY **key, pem_password_cb
+    *cb,\n                                void *u);\n// EVP PKEY\ntypedef struct evp_pkey_st
+    EVP_PKEY;\ntypedef struct engine_st ENGINE;\nEVP_PKEY *EVP_PKEY_new(void);\nint
+    EVP_PKEY_set1_RSA(EVP_PKEY *pkey,RSA *key);\nint EVP_PKEY_set1_EC_KEY(EVP_PKEY
+    *pkey,EC_KEY *key);\nEVP_PKEY *EVP_PKEY_new_mac_key(int type, ENGINE *e,\n                               const
+    unsigned char *key, int keylen);\nvoid EVP_PKEY_free(EVP_PKEY *key);\nint i2d_RSA(RSA
+    *a, unsigned char **out);\n\n// Additional typedef of ECC operations (DER/RAW
+    sig conversion)\ntypedef struct bignum_st BIGNUM;\nBIGNUM *BN_new(void);\nvoid
+    BN_free(BIGNUM *a);\nint BN_num_bits(const BIGNUM *a);\nint BN_bn2bin(const BIGNUM
+    *a, unsigned char *to);\nBIGNUM *BN_bin2bn(const unsigned char *s, int len, BIGNUM
+    *ret);\nchar *BN_bn2hex(const BIGNUM *a);\n\n\ntypedef struct ECDSA_SIG_st {\n
+    \   BIGNUM *r;\n    BIGNUM *s;} ECDSA_SIG;\nECDSA_SIG*     ECDSA_SIG_new(void);\nint
+    \           i2d_ECDSA_SIG(const ECDSA_SIG *sig, unsigned char **pp);\nECDSA_SIG*
+    \    d2i_ECDSA_SIG(ECDSA_SIG **sig, unsigned char **pp,\nlong len);\nvoid           ECDSA_SIG_free(ECDSA_SIG
+    *sig);\n\ntypedef struct ecgroup_st EC_GROUP;\n\nEC_GROUP *EC_KEY_get0_group(const
+    EC_KEY *key);\nEC_KEY *EVP_PKEY_get0_EC_KEY(EVP_PKEY *pkey);\nint EC_GROUP_get_order(const
+    EC_GROUP *group, BIGNUM *order, void *ctx);\n\n\n// PUBKEY\nEVP_PKEY *PEM_read_bio_PUBKEY(BIO
+    *bp, EVP_PKEY **x,\n                              pem_password_cb *cb, void *u);\n\n//
+    X509\ntypedef struct x509_st X509;\nX509 *PEM_read_bio_X509(BIO *bp, X509 **x,
+    pem_password_cb *cb, void *u);\nEVP_PKEY *      X509_get_pubkey(X509 *x);\nvoid
+    X509_free(X509 *a);\nvoid EVP_PKEY_free(EVP_PKEY *key);\nint i2d_X509(X509 *a,
+    unsigned char **out);\nX509 *d2i_X509_bio(BIO *bp, X509 **x);\n\n// X509 store\ntypedef
+    struct x509_store_st X509_STORE;\ntypedef struct X509_crl_st X509_CRL;\nX509_STORE
+    *X509_STORE_new(void );\nint X509_STORE_add_cert(X509_STORE *ctx, X509 *x);\n
+    \   // Use this if we want to load the certs directly from a variables\nint X509_STORE_add_crl(X509_STORE
+    *ctx, X509_CRL *x);\nint     X509_STORE_load_locations (X509_STORE *ctx,\n                const
+    char *file, const char *dir);\nvoid X509_STORE_free(X509_STORE *v);\n\n// X509
+    store context\ntypedef struct x509_store_ctx_st X509_STORE_CTX;\nX509_STORE_CTX
+    *X509_STORE_CTX_new(void);\nint X509_STORE_CTX_init(X509_STORE_CTX *ctx, X509_STORE
+    *store,\n                         X509 *x509, void *chain);\nint             X509_verify_cert(X509_STORE_CTX
+    *ctx);\nvoid X509_STORE_CTX_cleanup(X509_STORE_CTX *ctx);\nint    X509_STORE_CTX_get_error(X509_STORE_CTX
+    *ctx);\nconst char *X509_verify_cert_error_string(long n);\nvoid X509_STORE_CTX_free(X509_STORE_CTX
+    *ctx);\n\n// EVP Sign/Verify\ntypedef struct env_md_ctx_st EVP_MD_CTX;\ntypedef
+    struct env_md_st EVP_MD;\ntypedef struct evp_pkey_ctx_st EVP_PKEY_CTX;\nconst
+    EVP_MD *EVP_get_digestbyname(const char *name);\n\n//OpenSSL 1.0\nEVP_MD_CTX *EVP_MD_CTX_create(void);\nvoid
+    \   EVP_MD_CTX_destroy(EVP_MD_CTX *ctx);\n\n//OpenSSL 1.1\nEVP_MD_CTX *EVP_MD_CTX_new(void);\nvoid
+    \   EVP_MD_CTX_free(EVP_MD_CTX *ctx);\n\nint     EVP_DigestInit_ex(EVP_MD_CTX
+    *ctx, const EVP_MD *type, ENGINE *impl);\nint     EVP_DigestSignInit(EVP_MD_CTX
+    *ctx, EVP_PKEY_CTX **pctx,\n                        const EVP_MD *type, ENGINE
+    *e, EVP_PKEY *pkey);\nint     EVP_DigestUpdate(EVP_MD_CTX *ctx,const void *d,\n
+    \                        size_t cnt);\nint     EVP_DigestSignFinal(EVP_MD_CTX
+    *ctx,\n                        unsigned char *sigret, size_t *siglen);\n\nint
+    \    EVP_DigestVerifyInit(EVP_MD_CTX *ctx, EVP_PKEY_CTX **pctx,\n                        const
+    EVP_MD *type, ENGINE *e, EVP_PKEY *pkey);\nint     EVP_DigestVerifyFinal(EVP_MD_CTX
+    *ctx,\n                        unsigned char *sig, size_t siglen);\n\n// Fingerprints\nint
+    X509_digest(const X509 *data,const EVP_MD *type,\n                unsigned char
+    *md, unsigned int *len);\n\n//EVP encrypt decrypt\nEVP_PKEY_CTX *EVP_PKEY_CTX_new(EVP_PKEY
+    *pkey, ENGINE *e);\nvoid EVP_PKEY_CTX_free(EVP_PKEY_CTX *ctx);\n\nint EVP_PKEY_CTX_ctrl(EVP_PKEY_CTX
+    *ctx, int keytype, int optype,\n                      int cmd, int p1, void *p2);\n\nint
+    EVP_PKEY_size(EVP_PKEY *pkey);\n\nint EVP_PKEY_encrypt_init(EVP_PKEY_CTX *ctx);\nint
+    EVP_PKEY_encrypt(EVP_PKEY_CTX *ctx,\n        unsigned char *out, size_t *outlen,\n
+    \       const unsigned char *in, size_t inlen);\n\nint EVP_PKEY_decrypt_init(EVP_PKEY_CTX
+    *ctx);\nint EVP_PKEY_decrypt(EVP_PKEY_CTX *ctx,\n                        unsigned
+    char *out, size_t *outlen,\n                        const unsigned char *in, size_t
+    inlen);\n\n\n]]\n\n\nlocal function _err(ret)\n    -- The openssl error queue
+    can have multiple items, print them all separated by ': '\n    local errs = {}\n
+    \   local code = _C.ERR_get_error()\n    while code ~= 0 do\n        table.insert(errs,
+    1, ffi_string(_C.ERR_reason_error_string(code)))\n        code = _C.ERR_get_error()\n
+    \   end\n\n    if #errs == 0 then\n        return ret, \"Zero error code (null
+    arguments?)\"\n    end\n    return ret, table.concat(errs, \": \")\nend\n\nlocal
+    ctx_new, ctx_free\nlocal openssl11, e = pcall(function ()\n    local ctx = _C.EVP_MD_CTX_new()\n
+    \   _C.EVP_MD_CTX_free(ctx)\nend)\n\nngx.log(ngx.DEBUG, \"openssl11=\", openssl11,
+    \" err=\", e)\n\nif openssl11 then\n    ctx_new = function ()\n        return
+    _C.EVP_MD_CTX_new()\n    end\n    ctx_free = function (ctx)\n        ffi_gc(ctx,
+    _C.EVP_MD_CTX_free)\n    end\nelse\n    ctx_new = function ()\n        local ctx
+    = _C.EVP_MD_CTX_create()\n        return ctx\n    end\n    ctx_free = function
+    (ctx)\n        ffi_gc(ctx, _C.EVP_MD_CTX_destroy)\n    end\nend\n\nlocal function
+    _new_key(self, opts)\n    local bio = _C.BIO_new(_C.BIO_s_mem())\n    ffi_gc(bio,
+    _C.BIO_vfree)\n    if _C.BIO_puts(bio, opts.pem_private_key) < 0 then\n        return
+    _err()\n    end\n\n    local pass\n    if opts.password then\n        local plen
+    = #opts.password\n        pass = ffi_new(\"unsigned char[?]\", plen + 1)\n        ffi_copy(pass,
+    opts.password, plen)\n    end\n\n    local key = nil\n    if self.algo == \"RSA\"
+    then\n       key = _C.PEM_read_bio_RSAPrivateKey(bio, nil, nil, pass)\n       ffi_gc(key,
+    _C.RSA_free)\n    elseif self.algo == \"ECDSA\" then\n        key = _C.PEM_read_bio_ECPrivateKey(bio,
+    nil, nil, pass)\n        ffi_gc(key, _C.EC_KEY_free)\n    end\n\n    if not key
+    then\n        return _err()\n    end\n\n    local evp_pkey = _C.EVP_PKEY_new()\n
+    \   if evp_pkey == nil then\n        return _err()\n    end\n\n    ffi_gc(evp_pkey,
+    _C.EVP_PKEY_free)\n    if self.algo == \"RSA\" then\n        if _C.EVP_PKEY_set1_RSA(evp_pkey,
+    key) ~= 1 then\n           return _err()\n        end\n    elseif self.algo ==
+    \"ECDSA\" then\n        if _C.EVP_PKEY_set1_EC_KEY(evp_pkey, key) ~= 1 then\n
+    \           return _err()\n        end\n    end\n\n    self.evp_pkey = evp_pkey\n
+    \   return self, nil\nend\n\nlocal function _create_evp_ctx(self, encrypt)\n    self.ctx
+    = _C.EVP_PKEY_CTX_new(self.evp_pkey, nil)\n    if self.ctx == nil then\n        return
+    _err()\n    end\n\n    ffi_gc(self.ctx, _C.EVP_PKEY_CTX_free)\n\n    local md
+    = _C.EVP_get_digestbyname(self.digest_alg)\n    if ffi_cast(\"void *\", md) ==
+    nil then\n        return nil, \"Unknown message digest\"\n    end\n\n    if encrypt
+    then\n      if _C.EVP_PKEY_encrypt_init(self.ctx) <= 0 then\n        return _err()\n
+    \     end\n    else\n      if _C.EVP_PKEY_decrypt_init(self.ctx) <= 0 then\n        return
+    _err()\n      end\n    end\n\n    if _C.EVP_PKEY_CTX_ctrl(self.ctx, CONST.EVP_PKEY_RSA,
+    -1, CONST.EVP_PKEY_CTRL_RSA_PADDING,\n                self.padding, nil) <= 0
+    then\n            return _err()\n    end\n\n    if self.padding ==  CONST.RSA_PKCS1_OAEP_PADDING
+    then\n        if _C.EVP_PKEY_CTX_ctrl(self.ctx, CONST.EVP_PKEY_RSA, CONST.EVP_PKEY_OP_TYPE_CRYPT,\n
+    \             CONST.EVP_PKEY_CTRL_RSA_OAEP_MD, 0, ffi_cast(\"void *\", md)) <=
+    0 then\n              return _err()\n        end\n    end\n\n    return self.ctx\nend\n\nlocal
+    RSASigner = {algo=\"RSA\"}\n_M.RSASigner = RSASigner\n\n--- Create a new RSASigner\n--
+    @param pem_private_key A private key string in PEM format\n-- @param password
+    password for the private key (if required)\n-- @returns RSASigner, err_string\nfunction
+    RSASigner.new(self, pem_private_key, password)\n    return _new_key (\n        self,\n
+    \       {\n            pem_private_key = pem_private_key,\n            password
+    = password\n        }\n    )\nend\n\n\n--- Sign a message\n-- @param message The
+    message to sign\n-- @param digest_name The digest format to use (e.g., \"SHA256\")\n--
+    @returns signature, error_string\nfunction RSASigner.sign(self, message, digest_name)\n
+    \   local buf = ffi_new(\"unsigned char[?]\", 1024)\n    local len = ffi_new(\"size_t[1]\",
+    1024)\n\n    local ctx = ctx_new()\n    if ctx == nil then\n        return _err()\n
+    \   end\n    ctx_free(ctx)\n\n    local md = _C.EVP_get_digestbyname(digest_name)\n
+    \   if md == nil then\n        return _err()\n    end\n\n    if _C.EVP_DigestInit_ex(ctx,
+    md, nil) ~= 1 then\n        return _err()\n    end\n\n    local ret = _C.EVP_DigestSignInit(ctx,
+    nil, md, nil, self.evp_pkey)\n    if  ret ~= 1 then\n        return _err()\n    end\n
+    \   if _C.EVP_DigestUpdate(ctx, message, #message) ~= 1 then\n         return
+    _err()\n    end\n    if _C.EVP_DigestSignFinal(ctx, buf, len) ~= 1 then\n        return
+    _err()\n    end\n    return ffi_string(buf, len[0]), nil\nend\n\n\nlocal ECSigner
+    = {algo=\"ECDSA\"}\n_M.ECSigner = ECSigner\n\n--- Create a new ECSigner\n-- @param
+    pem_private_key A private key string in PEM format\n-- @param password password
+    for the private key (if required)\n-- @returns ECSigner, err_string\nfunction
+    ECSigner.new(self, pem_private_key, password)\n    return RSASigner.new(self,
+    pem_private_key, password)\nend\n\n--- Sign a message with ECDSA\n-- @param message
+    The message to sign\n-- @param digest_name The digest format to use (e.g., \"SHA256\")\n--
+    @returns signature, error_string\nfunction ECSigner.sign(self, message, digest_name)\n
+    \   return RSASigner.sign(self, message, digest_name)\nend\n\n--- Converts a ASN.1
+    DER signature to RAW r,s\n-- @param signature The ASN.1 DER signature\n-- @returns
+    signature, error_string\nfunction ECSigner.get_raw_sig(self, signature)\n    if
+    not signature then\n        return nil, \"Must pass a signature to convert\"\n
+    \   end\n    local sig_ptr = ffi_new(\"unsigned char *[1]\")\n    local sig_bin
+    = ffi_new(\"unsigned char [?]\", #signature)\n    ffi_copy(sig_bin, signature,
+    #signature)\n\n    sig_ptr[0] = sig_bin\n    local sig = _C.d2i_ECDSA_SIG(nil,
+    sig_ptr, #signature)\n    ffi_gc(sig, _C.ECDSA_SIG_free)\n\n    local rbytes =
+    math.floor((_C.BN_num_bits(sig.r)+7)/8)\n    local sbytes = math.floor((_C.BN_num_bits(sig.s)+7)/8)\n\n
+    \   -- Ensure we copy the BN in a padded form\n    local ec = _C.EVP_PKEY_get0_EC_KEY(self.evp_pkey)\n
+    \   local ecgroup = _C.EC_KEY_get0_group(ec)\n\n    local order =  _C.BN_new()\n
+    \   ffi_gc(order, _C.BN_free)\n\n    -- res is an int, if 0, curve not found\n
+    \   local res = _C.EC_GROUP_get_order(ecgroup, order, nil)\n\n    -- BN_num_bytes
+    is a #define, so have to use BN_num_bits\n    local order_size_bytes = math.floor((_C.BN_num_bits(order)+7)/8)\n
+    \   local resbuf_len = order_size_bytes *2\n    local resbuf = ffi_new(\"unsigned
+    char[?]\", resbuf_len)\n\n    -- Let's whilst preserving MSB\n    _C.BN_bn2bin(sig.r,
+    resbuf + order_size_bytes - rbytes)\n    _C.BN_bn2bin(sig.s, resbuf + (order_size_bytes*2)
+    - sbytes)\n\n    local raw = ffi_string(resbuf, resbuf_len)\n    return raw, nil\nend\n\nlocal
+    RSAVerifier = {}\n_M.RSAVerifier = RSAVerifier\n\n\n--- Create a new RSAVerifier\n--
+    @param key_source An instance of Cert or PublicKey used for verification\n-- @returns
+    RSAVerifier, error_string\nfunction RSAVerifier.new(self, key_source)\n    if
+    not key_source then\n        return nil, \"You must pass in an key_source for
+    a public key\"\n    end\n    local evp_public_key = key_source.public_key\n    self.evp_pkey
+    = evp_public_key\n    return self, nil\nend\n\n--- Verify a message is properly
+    signed\n-- @param message The original message\n-- @param the signature to verify\n--
+    @param digest_name The digest type that was used to sign\n-- @returns bool, error_string\nfunction
+    RSAVerifier.verify(self, message, sig, digest_name)\n    local md = _C.EVP_get_digestbyname(digest_name)\n
+    \   if md == nil then\n        return _err(false)\n    end\n\n    local ctx =
+    ctx_new()\n    if ctx == nil then\n        return _err(false)\n    end\n    ctx_free(ctx)\n\n
+    \   if _C.EVP_DigestInit_ex(ctx, md, nil) ~= 1 then\n        return _err(false)\n
+    \   end\n\n    local ret = _C.EVP_DigestVerifyInit(ctx, nil, md, nil, self.evp_pkey)\n
+    \   if ret ~= 1 then\n        return _err(false)\n    end\n    if _C.EVP_DigestUpdate(ctx,
+    message, #message) ~= 1 then\n        return _err(false)\n    end\n    local sig_bin
+    = ffi_new(\"unsigned char[?]\", #sig)\n    ffi_copy(sig_bin, sig, #sig)\n    if
+    _C.EVP_DigestVerifyFinal(ctx, sig_bin, #sig) == 1 then\n        return true, nil\n
+    \   else\n        return false, \"Verification failed\"\n    end\nend\n\nlocal
+    ECVerifier = {}\n_M.ECVerifier = ECVerifier\n--- Create a new ECVerifier\n-- @param
+    key_source An instance of Cert or PublicKey used for verification\n-- @returns
+    ECVerifier, error_string\nfunction ECVerifier.new(self, key_source)\n    return
+    RSAVerifier.new(self, key_source)\nend\n\n--- Verify a message is properly signed\n--
+    @param message The original message\n-- @param the signature to verify\n-- @param
+    digest_name The digest type that was used to sign\n-- @returns bool, error_string\nfunction
+    ECVerifier.verify(self, message, sig, digest_name)\n    -- We have to convert
+    the signature back from RAW to ASN1 for verification\n    local der_sig, err =
+    self:get_der_sig(sig)\n    if not der_sig then\n        return nil, err\n    end\n
+    \   return RSAVerifier.verify(self, message, der_sig, digest_name)\nend\n\n---
+    Converts a RAW r,s signature to ASN.1 DER signature (ECDSA)\n-- @param signature
+    The raw signature\n-- @returns signature, error_string\nfunction ECVerifier.get_der_sig(self,
+    signature)\n    if not signature then\n        return nil, \"Must pass a signature
+    to convert\"\n    end\n    -- inspired from https://bit.ly/2yZxzxJ\n    local
+    ec = _C.EVP_PKEY_get0_EC_KEY(self.evp_pkey)\n    local ecgroup = _C.EC_KEY_get0_group(ec)\n\n
+    \   local order =  _C.BN_new()\n    ffi_gc(order, _C.BN_free)\n\n    -- res is
+    an int, if 0, curve not found\n    local res = _C.EC_GROUP_get_order(ecgroup,
+    order, nil)\n\n    -- BN_num_bytes is a #define, so have to use BN_num_bits\n
+    \   local order_size_bytes = math.floor((_C.BN_num_bits(order)+7)/8)\n\n    if
+    #signature ~= 2 * order_size_bytes then\n        return nil, \"signature length
+    != 2 * order length\"\n    end\n\n    local sig_bytes = ffi_new(\"unsigned char
+    [?]\", #signature)\n    ffi_copy(sig_bytes, signature, #signature)\n    local
+    ecdsa = _C.ECDSA_SIG_new()\n    ffi_gc(ecdsa, _C.ECDSA_SIG_free)\n\n    -- Those
+    do not need to be GCed as they are cleared by the ECDSA_SIG_free()\n    local
+    r = _C.BN_bin2bn(sig_bytes, order_size_bytes, nil)\n    local s = _C.BN_bin2bn(sig_bytes
+    + order_size_bytes, order_size_bytes, nil)\n\n    ecdsa.r = r\n    ecdsa.s = s\n\n
+    \   -- Gives us the buffer size to allocate\n    local der_len = _C.i2d_ECDSA_SIG(ecdsa,
+    nil)\n\n    local der_sig_ptr = ffi_new(\"unsigned char *[1]\")\n    local der_sig_bin
+    = ffi_new(\"unsigned char [?]\", der_len)\n    der_sig_ptr[0] = der_sig_bin\n
+    \   der_len = _C.i2d_ECDSA_SIG(ecdsa, der_sig_ptr)\n\n    local der_str = ffi_string(der_sig_bin,
+    der_len)\n    return der_str, nil\nend\n\n\nlocal Cert = {}\n_M.Cert = Cert\n\n\n---
+    Create a new Certificate object\n-- @param payload A PEM or DER format X509 certificate\n--
+    @returns Cert, error_string\nfunction Cert.new(self, payload)\n    if not payload
+    then\n        return nil, \"Must pass a PEM or binary DER cert\"\n    end\n    local
+    bio = _C.BIO_new(_C.BIO_s_mem())\n    ffi_gc(bio, _C.BIO_vfree)\n    local x509\n
+    \   if payload:find('-----BEGIN') then\n        if _C.BIO_puts(bio, payload) <
+    0 then\n            return _err()\n        end\n        x509 = _C.PEM_read_bio_X509(bio,
+    nil, nil, nil)\n    else\n        if _C.BIO_write(bio, payload, #payload) < 0
+    then\n            return _err()\n        end\n        x509 = _C.d2i_X509_bio(bio,
+    nil)\n    end\n    if x509 == nil then\n        return _err()\n    end\n    ffi_gc(x509,
+    _C.X509_free)\n    self.x509 = x509\n    local public_key, err = self:get_public_key()\n
+    \   if not public_key then\n        return nil, err\n    end\n\n    ffi_gc(public_key,
+    _C.EVP_PKEY_free)\n\n    self.public_key = public_key\n    return self, nil\nend\n\n\n---
+    Retrieve the DER format of the certificate\n-- @returns Binary DER format, error_string\nfunction
+    Cert.get_der(self)\n    local bufp = ffi_new(\"unsigned char *[1]\")\n    local
+    len = _C.i2d_X509(self.x509, bufp)\n    if len < 0 then\n        return _err()\n
+    \   end\n    local der = ffi_string(bufp[0], len)\n    return der, nil\nend\n\n---
+    Retrieve the cert fingerprint\n-- @param digest_name the Type of digest to use
+    (e.g., \"SHA256\")\n-- @returns fingerprint_string, error_string\nfunction Cert.get_fingerprint(self,
+    digest_name)\n    local md = _C.EVP_get_digestbyname(digest_name)\n    if md ==
+    nil then\n        return _err()\n    end\n    local buf = ffi_new(\"unsigned char[?]\",
+    32)\n    local len = ffi_new(\"unsigned int[1]\", 32)\n    if _C.X509_digest(self.x509,
+    md, buf, len) ~= 1 then\n        return _err()\n    end\n    local raw = ffi_string(buf,
+    len[0])\n    local t = {}\n    raw:gsub('.', function (c) table.insert(t, string.format('%02X',
+    string.byte(c))) end)\n    return table.concat(t, \":\"), nil\nend\n\n--- Retrieve
+    the public key from the CERT\n-- @returns An OpenSSL EVP PKEY object representing
+    the public key, error_string\nfunction Cert.get_public_key(self)\n    local evp_pkey
+    = _C.X509_get_pubkey(self.x509)\n    if evp_pkey == nil then\n        return _err()\n
+    \   end\n\n    return evp_pkey, nil\nend\n\n--- Verify the Certificate is trusted\n--
+    @param trusted_cert_file File path to a list of PEM encoded trusted certificates\n--
+    @return bool, error_string\nfunction Cert.verify_trust(self, trusted_cert_file)\n
+    \   local store = _C.X509_STORE_new()\n    if store == nil then\n        return
+    _err(false)\n    end\n    ffi_gc(store, _C.X509_STORE_free)\n    if _C.X509_STORE_load_locations(store,
+    trusted_cert_file, nil) ~=1 then\n        return _err(false)\n    end\n\n    local
+    ctx = _C.X509_STORE_CTX_new()\n    if store == nil then\n        return _err(false)\n
+    \   end\n    ffi_gc(ctx, _C.X509_STORE_CTX_free)\n    if _C.X509_STORE_CTX_init(ctx,
+    store, self.x509, nil) ~= 1 then\n        return _err(false)\n    end\n\n    if
+    _C.X509_verify_cert(ctx) ~= 1 then\n        local code = _C.X509_STORE_CTX_get_error(ctx)\n
+    \       local msg = ffi_string(_C.X509_verify_cert_error_string(code))\n        _C.X509_STORE_CTX_cleanup(ctx)\n
+    \       return false, msg\n    end\n    _C.X509_STORE_CTX_cleanup(ctx)\n    return
+    true, nil\n\nend\n\nlocal PublicKey = {}\n_M.PublicKey = PublicKey\n\n--- Create
+    a new PublicKey object\n--\n-- If a PEM fornatted key is provided, the key must
+    start with\n--\n-- ----- BEGIN PUBLIC KEY -----\n--\n-- @param payload A PEM or
+    DER format public key file\n-- @return PublicKey, error_string\nfunction PublicKey.new(self,
+    payload)\n    if not payload then\n        return nil, \"Must pass a PEM or binary
+    DER public key\"\n    end\n    local bio = _C.BIO_new(_C.BIO_s_mem())\n    ffi_gc(bio,
+    _C.BIO_vfree)\n    local pkey\n    if payload:find('-----BEGIN') then\n        if
+    _C.BIO_puts(bio, payload) < 0 then\n            return _err()\n        end\n        pkey
+    = _C.PEM_read_bio_PUBKEY(bio, nil, nil, nil)\n    else\n        if _C.BIO_write(bio,
+    payload, #payload) < 0 then\n            return _err()\n        end\n        pkey
+    = _C.d2i_PUBKEY_bio(bio, nil)\n    end\n    if pkey == nil then\n        return
+    _err()\n    end\n    ffi_gc(pkey, _C.EVP_PKEY_free)\n    self.public_key = pkey\n
+    \   return self, nil\nend\n\nlocal RSAEncryptor= {}\n_M.RSAEncryptor = RSAEncryptor\n\n---
+    Create a new RSAEncryptor\n-- @param key_source An instance of Cert or PublicKey
+    used for verification\n-- @param padding padding type to use\n-- @param digest_alg
+    digest algorithm to use\n-- @returns RSAEncryptor, err_string\nfunction RSAEncryptor.new(self,
+    key_source, padding, digest_alg)\n    if not key_source then\n        return nil,
+    \"You must pass in an key_source for a public key\"\n    end\n    local evp_public_key
+    = key_source.public_key\n    self.evp_pkey = evp_public_key\n    self.padding
+    = padding or CONST.RSA_PKCS1_OAEP_PADDING\n    self.digest_alg = digest_alg or
+    CONST.SHA256_DIGEST\n    return self, nil\nend\n\n\n\n--- Encrypts the payload\n--
+    @param payload plain text payload\n-- @returns encrypted payload, error_string\nfunction
+    RSAEncryptor.encrypt(self, payload)\n\n    local ctx, err_str = _create_evp_ctx(self,
+    true)\n\n    if not ctx then\n        return nil, err_str\n    end\n    local
+    len = ffi_new(\"size_t [1]\")\n    if _C.EVP_PKEY_encrypt(ctx, nil, len, payload,
+    #payload) <= 0 then\n        return _err()\n    end\n    local buf = ffi_new(\"unsigned
+    char[?]\", len[0])\n    if _C.EVP_PKEY_encrypt(ctx, buf, len, payload, #payload)
+    <= 0 then\n        return _err()\n    end\n\n    return ffi_string(buf, len[0])\n\nend\n\n\nlocal
+    RSADecryptor= {algo=\"RSA\"}\n_M.RSADecryptor = RSADecryptor\n\n--- Create a new
+    RSADecryptor\n-- @param pem_private_key A private key string in PEM format\n--
+    @param password password for the private key (if required)\n-- @param padding
+    padding type to use\n-- @param digest_alg digest algorithm to use\n-- @returns
+    RSADecryptor, error_string\nfunction RSADecryptor.new(self, pem_private_key, password,
+    padding, digest_alg)\n    self.padding = padding or CONST.RSA_PKCS1_OAEP_PADDING\n
+    \   self.digest_alg = digest_alg or CONST.SHA256_DIGEST\n    return _new_key (\n
+    \       self,\n        {\n            pem_private_key = pem_private_key,\n            password
+    = password\n        }\n    )\nend\n\n--- Decrypts the cypher text\n-- @param cypher_text
+    encrypted payload\n-- @param padding rsa pading mode to use, Defaults to RSA_PKCS1_PADDING\nfunction
+    RSADecryptor.decrypt(self, cypher_text)\n\n    local ctx, err_code, err_str =
+    _create_evp_ctx(self, false)\n\n    if not ctx then\n        return nil, err_code,
+    err_str\n    end\n\n    local len = ffi_new(\"size_t [1]\")\n    if _C.EVP_PKEY_decrypt(ctx,
+    nil, len, cypher_text, #cypher_text) <= 0 then\n        return _err()\n    end\n\n
+    \   local buf = ffi_new(\"unsigned char[?]\", len[0])\n    if _C.EVP_PKEY_decrypt(ctx,
+    buf, len, cypher_text, #cypher_text) <= 0 then\n        return _err()\n    end\n\n
+    \   return ffi_string(buf, len[0])\n\nend\n\nreturn _M\n"
+  hmac.lua: |2-
+
+    local str_util = require "resty.string"
+    local to_hex = str_util.to_hex
+    local ffi = require "ffi"
+    local ffi_new = ffi.new
+    local ffi_str = ffi.string
+    local ffi_gc = ffi.gc
+    local ffi_typeof = ffi.typeof
+    local C = ffi.C
+    local setmetatable = setmetatable
+
+
+    local _M = { _VERSION = '0.06' }
+
+    local mt = { __index = _M }
+
+
+    ffi.cdef[[
+    typedef struct engine_st ENGINE;
+    typedef struct evp_pkey_ctx_st EVP_PKEY_CTX;
+    typedef struct hmac_ctx_st HMAC_CTX;
+
+    //OpenSSL 1.0
+    void HMAC_CTX_init(HMAC_CTX *ctx);
+    void HMAC_CTX_cleanup(HMAC_CTX *ctx);
+
+    //OpenSSL 1.1
+    HMAC_CTX *HMAC_CTX_new(void);
+    void HMAC_CTX_free(HMAC_CTX *ctx);
+    ]]
+
+    local buf = ffi_new("unsigned char[64]")
+    local res_len = ffi_new("unsigned int[1]")
+
+    local ctx_new, ctx_free
+    local openssl11, e = pcall(function ()
+        local ctx = C.HMAC_CTX_new()
+        C.HMAC_CTX_free(ctx)
+    end)
+    if openssl11 then
+        ffi.cdef [[
+        typedef struct evp_md_ctx_st EVP_MD_CTX;
+        typedef struct evp_md_st EVP_MD;
+        ]]
+        ctx_new = function ()
+            return C.HMAC_CTX_new()
+        end
+        ctx_free = function (ctx)
+            C.HMAC_CTX_free(ctx)
+        end
+    else
+        ffi.cdef [[
+        typedef struct env_md_ctx_st EVP_MD_CTX;
+        typedef struct env_md_st EVP_MD;
+        struct env_md_ctx_st
+        {
+            const EVP_MD *digest;
+            ENGINE *engine;
+            unsigned long flags;
+            void *md_data;
+            EVP_PKEY_CTX *pctx;
+            int (*update)(EVP_MD_CTX *ctx,const void *data,size_t count);
+        };
+
+        struct env_md_st
+        {
+            int type;
+            int pkey_type;
+            int md_size;
+            unsigned long flags;
+            int (*init)(EVP_MD_CTX *ctx);
+            int (*update)(EVP_MD_CTX *ctx,const void *data,size_t count);
+            int (*final)(EVP_MD_CTX *ctx,unsigned char *md);
+            int (*copy)(EVP_MD_CTX *to,const EVP_MD_CTX *from);
+            int (*cleanup)(EVP_MD_CTX *ctx);
+
+            int (*sign)(int type, const unsigned char *m, unsigned int m_length, unsigned char *sigret, unsigned int *siglen, void *key);
+            int (*verify)(int type, const unsigned char *m, unsigned int m_length, const unsigned char *sigbuf, unsigned int siglen, void *key);
+            int required_pkey_type[5];
+            int block_size;
+            int ctx_size;
+            int (*md_ctrl)(EVP_MD_CTX *ctx, int cmd, int p1, void *p2);
+            };
+
+        struct hmac_ctx_st
+        {
+            const EVP_MD *md;
+            EVP_MD_CTX md_ctx;
+            EVP_MD_CTX i_ctx;
+            EVP_MD_CTX o_ctx;
+            unsigned int key_length;
+            unsigned char key[128];
+        };
+        ]]
+
+        local ctx_ptr_type = ffi_typeof("HMAC_CTX[1]")
+
+        ctx_new = function ()
+            local ctx = ffi_new(ctx_ptr_type)
+            C.HMAC_CTX_init(ctx)
+            return ctx
+        end
+        ctx_free = function (ctx)
+            C.HMAC_CTX_cleanup(ctx)
+        end
+    end
+
+    ffi.cdef [[
+    int HMAC_Init_ex(HMAC_CTX *ctx, const void *key, int len, const EVP_MD *md, ENGINE *impl);
+    int HMAC_Update(HMAC_CTX *ctx, const unsigned char *data, size_t len);
+    int HMAC_Final(HMAC_CTX *ctx, unsigned char *md, unsigned int *len);
+
+    const EVP_MD *EVP_md5(void);
+    const EVP_MD *EVP_sha1(void);
+    const EVP_MD *EVP_sha256(void);
+    const EVP_MD *EVP_sha384(void);
+    const EVP_MD *EVP_sha512(void);
+    ]]
+
+    local hashes = {
+        MD5 = C.EVP_md5(),
+        SHA1 = C.EVP_sha1(),
+        SHA256 = C.EVP_sha256(),
+        SHA384 = C.EVP_sha384(),
+        SHA512 = C.EVP_sha512()
+    }
+
+    _M.ALGOS = hashes
+
+
+    function _M.new(self, key, hash_algo)
+        local ctx = ctx_new()
+
+        local _hash_algo = hash_algo or hashes.MD5
+
+        if C.HMAC_Init_ex(ctx, key, #key, _hash_algo, nil) == 0 then
+            return nil
+        end
+
+        ffi_gc(ctx, ctx_free)
+
+        return setmetatable({ _ctx = ctx }, mt)
+    end
+
+
+    function _M.update(self, s)
+        return C.HMAC_Update(self._ctx, s, #s) == 1
+    end
+
+
+    function _M.final(self, s, hex_output)
+
+        if s ~= nil then
+            if C.HMAC_Update(self._ctx, s, #s) == 0 then
+                return nil
+            end
+        end
+
+        if C.HMAC_Final(self._ctx, buf, res_len) == 1 then
+            if hex_output == true then
+                return to_hex(ffi_str(buf, res_len[0]))
+            end
+            return ffi_str(buf, res_len[0])
+        end
+
+        return nil
+    end
+
+
+    function _M.reset(self)
+        return C.HMAC_Init_ex(self._ctx, nil, 0, nil, nil) == 1
+    end
+
+
+    return _M
+  jwt-validators.lua: |
+    local _M = { _VERSION = "0.2.3" }
+
+    --[[
+      This file defines "validators" to be used in validating a spec.  A "validator" is simply a function with
+      a signature that matches:
+
+        function(val, claim, jwt_json)
+
+      This function returns either true or false.  If a validator needs to give more information on why it failed,
+      then it can also raise an error (which will be used in the "reason" part of the validated jwt_obj).  If a
+      validator returns nil, then it is assumed to have passed (same as returning true) and that you just forgot
+      to actually return a value.
+
+      There is a special claim name of "__jwt" that can be used to validate the entire jwt_obj.
+
+      "val" is the value being tested.  It may be nil if the claim doesn't exist in the jwt_obj.  If the function
+      is being called for the "__jwt" claim, then "val" will contain a deep clone of the full jwt object.
+
+      "claim" is the claim that is being tested.  It is passed in just in case a validator needs to do additional
+      checks.  It will be the string "__jwt" if the validator is being called for the entire jwt_object.
+
+      "jwt_json" is a json-encoded representation of the full object that is being tested.  It will never be nil,
+      and can always be decoded using cjson.decode(jwt_json).
+    ]]--
+
+
+    --[[
+        A function which will define a validator.  It creates both "opt_" and required (non-"opt_")
+        versions.  The function that is passed in is the *optional* version.
+    ]]--
+    local function define_validator(name, fx)
+      _M["opt_" .. name] = fx
+      _M[name] = function(...) return _M.chain(_M.required(), fx(...)) end
+    end
+
+    -- Validation messages
+    local messages = {
+      nil_validator = "Cannot create validator for nil %s.",
+      wrong_type_validator = "Cannot create validator for non-%s %s.",
+      empty_table_validator = "Cannot create validator for empty table %s.",
+      wrong_table_type_validator = "Cannot create validator for non-%s table %s.",
+      required_claim = "'%s' claim is required.",
+      wrong_type_claim = "'%s' is malformed.  Expected to be a %s.",
+      missing_claim = "Missing one of claims - [ %s ]."
+    }
+
+    -- Local function to make sure that a value is non-nil or raises an error
+    local function ensure_not_nil(v, e, ...)
+      return v ~= nil and v or error(string.format(e, ...), 0)
+    end
+
+    -- Local function to make sure that a value is the given type
+    local function ensure_is_type(v, t, e, ...)
+      return type(v) == t and v or error(string.format(e, ...), 0)
+    end
+
+    -- Local function to make sure that a value is a (non-empty) table
+    local function ensure_is_table(v, e, ...)
+      ensure_is_type(v, "table", e, ...)
+      return ensure_not_nil(next(v), e, ...)
+    end
+
+    -- Local function to make sure all entries in the table are the given type
+    local function ensure_is_table_type(v, t, e, ...)
+      if v ~= nil then
+        ensure_is_table(v, e, ...)
+        for _,val in ipairs(v) do
+          ensure_is_type(val, t, e, ...)
+        end
+      end
+      return v
+    end
+
+    -- Local function to ensure that a number is non-negative (positive or 0)
+    local function ensure_is_non_negative(v, e, ...)
+      if v ~= nil then
+        ensure_is_type(v, "number", e, ...)
+        if v >= 0 then
+          return v
+        else
+          error(string.format(e, ...), 0)
+        end
+      end
+    end
+
+    -- A local function which returns simple equality
+    local function equality_function(val, check)
+      return val == check
+    end
+
+    -- A local function which returns string match
+    local function string_match_function(val, pattern)
+      return string.match(val, pattern) ~= nil
+    end
+
+    --[[
+        A local function which returns truth on existence of check in vals.
+        Adopted from auth0/nginx-jwt table_contains by @twistedstream
+    ]]--
+    local function table_contains_function(vals, check)
+        for _, val in pairs(vals) do
+            if val == check then return true end
+        end
+        return false
+    end
+
+
+    -- A local function which returns numeric greater than comparison
+    local function greater_than_function(val, check)
+      return val > check
+    end
+
+    -- A local function which returns numeric greater than or equal comparison
+    local function greater_than_or_equal_function(val, check)
+      return val >= check
+    end
+
+    -- A local function which returns numeric less than comparison
+    local function less_than_function(val, check)
+      return val < check
+    end
+
+    -- A local function which returns numeric less than or equal comparison
+    local function less_than_or_equal_function(val, check)
+      return val <= check
+    end
+
+
+    --[[
+        Returns a validator that chains the given functions together, one after
+        another - as long as they keep passing their checks.
+    ]]--
+    function _M.chain(...)
+      local chain_functions = {...}
+      for _, fx in ipairs(chain_functions) do
+        ensure_is_type(fx, "function", messages.wrong_type_validator, "function", "chain_function")
+      end
+
+      return function(val, claim, jwt_json)
+        for _, fx in ipairs(chain_functions) do
+          if fx(val, claim, jwt_json) == false then
+            return false
+          end
+        end
+        return true
+      end
+    end
+
+    --[[
+        Returns a validator that returns false if a value doesn't exist.  If
+        the value exists and a chain_function is specified, then the value of
+            chain_function(val, claim, jwt_json)
+        will be returned, otherwise, true will be returned.  This allows for
+        specifying that a value is both required *and* it must match some
+        additional check.  This function will be used in the "required_*" shortcut
+        functions for simplification.
+    ]]--
+    function _M.required(chain_function)
+      if chain_function ~= nil then
+        return _M.chain(_M.required(), chain_function)
+      end
+
+      return function(val, claim, jwt_json)
+        ensure_not_nil(val, messages.required_claim, claim)
+        return true
+      end
+    end
+
+    --[[
+        Returns a validator which errors with a message if *NONE* of the given claim
+        keys exist.  It is expected that this function is used against a full jwt object.
+        The claim_keys must be a non-empty table of strings.
+    ]]--
+    function _M.require_one_of(claim_keys)
+      ensure_not_nil(claim_keys, messages.nil_validator, "claim_keys")
+      ensure_is_type(claim_keys, "table", messages.wrong_type_validator, "table", "claim_keys")
+      ensure_is_table(claim_keys, messages.empty_table_validator, "claim_keys")
+      ensure_is_table_type(claim_keys, "string", messages.wrong_table_type_validator, "string", "claim_keys")
+
+      return function(val, claim, jwt_json)
+        ensure_is_type(val, "table", messages.wrong_type_claim, claim, "table")
+        ensure_is_type(val.payload, "table", messages.wrong_type_claim, claim .. ".payload", "table")
+
+        for i, v in ipairs(claim_keys) do
+          if val.payload[v] ~= nil then return true end
+        end
+
+        error(string.format(messages.missing_claim, table.concat(claim_keys, ", ")), 0)
+      end
+    end
+
+    --[[
+        Returns a validator that checks if the result of calling the given function for
+        the tested value and the check value returns true.  The value of check_val and
+        check_function cannot be nil.  The optional name is used for error messages and
+        defaults to "check_value".  The optional check_type is used to make sure that
+        the check type matches and defaults to type(check_val).  The first parameter
+        passed to check_function will *never* be nil (check succeeds if value is nil).
+        Use the required version to fail on nil.  If the check_function raises an
+        error, that will be appended to the error message.
+    ]]--
+    define_validator("check", function(check_val, check_function, name, check_type)
+      name = name or "check_val"
+      ensure_not_nil(check_val, messages.nil_validator, name)
+
+      ensure_not_nil(check_function, messages.nil_validator, "check_function")
+      ensure_is_type(check_function, "function", messages.wrong_type_validator, "function", "check_function")
+
+      check_type = check_type or type(check_val)
+      return function(val, claim, jwt_json)
+        if val == nil then return true end
+
+        ensure_is_type(val, check_type, messages.wrong_type_claim, claim, check_type)
+        return check_function(val, check_val)
+      end
+    end)
+
+
+    --[[
+        Returns a validator that checks if a value exactly equals the given check_value.
+        If the value is nil, then this check succeeds.  The value of check_val cannot be
+        nil.
+    ]]--
+    define_validator("equals", function(check_val)
+      return _M.opt_check(check_val, equality_function, "check_val")
+    end)
+
+
+    --[[
+        Returns a validator that checks if a value matches the given pattern.  The value
+        of pattern must be a string.
+    ]]--
+    define_validator("matches", function (pattern)
+      ensure_is_type(pattern, "string", messages.wrong_type_validator, "string", "pattern")
+      return _M.opt_check(pattern, string_match_function, "pattern", "string")
+    end)
+
+
+    --[[
+        Returns a validator which calls the given function for each of the given values
+        and the tested value.  If any of these calls return true, then this function
+        returns true.  The value of check_values must be a non-empty table with all the
+        same types, and the value of check_function must not be nil.  The optional name
+        is used for error messages and defaults to "check_values".  The optional
+        check_type is used to make sure that the check type matches and defaults to
+        type(check_values[1]) - the table type.
+    ]]--
+    define_validator("any_of", function(check_values, check_function, name, check_type, table_type)
+      name = name or "check_values"
+      ensure_not_nil(check_values, messages.nil_validator, name)
+      ensure_is_type(check_values, "table", messages.wrong_type_validator, "table", name)
+      ensure_is_table(check_values, messages.empty_table_validator, name)
+
+      table_type = table_type or type(check_values[1])
+      ensure_is_table_type(check_values, table_type, messages.wrong_table_type_validator, table_type, name)
+
+      ensure_not_nil(check_function, messages.nil_validator, "check_function")
+      ensure_is_type(check_function, "function", messages.wrong_type_validator, "function", "check_function")
+
+      check_type = check_type or table_type
+      return _M.opt_check(check_values, function(v1, v2)
+        for i, v in ipairs(v2) do
+          if check_function(v1, v) then return true end
+        end
+        return false
+      end, name, check_type)
+    end)
+
+
+    --[[
+        Returns a validator that checks if a value exactly equals any of the given values.
+    ]]--
+    define_validator("equals_any_of", function(check_values)
+      return _M.opt_any_of(check_values, equality_function, "check_values")
+    end)
+
+
+    --[[
+        Returns a validator that checks if a value matches any of the given patterns.
+    ]]--
+    define_validator("matches_any_of", function(patterns)
+      return _M.opt_any_of(patterns, string_match_function, "patterns", "string", "string")
+    end)
+
+    --[[
+        Returns a validator that checks if a value of expected type string exists in any of the given values.
+        The value of check_values must be a non-empty table with all the same types.
+        The optional name is used for error messages and defaults to "check_values".
+    ]]--
+    define_validator("contains_any_of", function(check_values, name)
+      return _M.opt_any_of(check_values, table_contains_function, name, "table", "string")
+    end)
+
+    --[[
+        Returns a validator that checks how a value compares (numerically) to a given
+        check_value.  The value of check_val cannot be nil and must be a number.
+    ]]--
+    define_validator("greater_than", function(check_val)
+      ensure_is_type(check_val, "number", messages.wrong_type_validator, "number", "check_val")
+      return _M.opt_check(check_val, greater_than_function, "check_val", "number")
+    end)
+    define_validator("greater_than_or_equal", function(check_val)
+      ensure_is_type(check_val, "number", messages.wrong_type_validator, "number", "check_val")
+      return _M.opt_check(check_val, greater_than_or_equal_function, "check_val", "number")
+    end)
+    define_validator("less_than", function(check_val)
+      ensure_is_type(check_val, "number", messages.wrong_type_validator, "number", "check_val")
+      return _M.opt_check(check_val, less_than_function, "check_val", "number")
+    end)
+    define_validator("less_than_or_equal", function(check_val)
+      ensure_is_type(check_val, "number", messages.wrong_type_validator, "number", "check_val")
+      return _M.opt_check(check_val, less_than_or_equal_function, "check_val", "number")
+    end)
+
+
+    --[[
+        A function to set the leeway (in seconds) used for is_not_before and is_not_expired.  The
+        default is to use 0 seconds
+    ]]--
+    local system_leeway = 0
+    function _M.set_system_leeway(leeway)
+      ensure_is_type(leeway, "number", "leeway must be a non-negative number")
+      ensure_is_non_negative(leeway, "leeway must be a non-negative number")
+      system_leeway = leeway
+    end
+
+
+    --[[
+        A function to set the system clock used for is_not_before and is_not_expired.  The
+        default is to use ngx.now
+    ]]--
+    local system_clock = ngx.now
+    function _M.set_system_clock(clock)
+      ensure_is_type(clock, "function", "clock must be a function")
+      -- Check that clock returns the correct value
+      local t = clock()
+      ensure_is_type(t, "number", "clock function must return a non-negative number")
+      ensure_is_non_negative(t, "clock function must return a non-negative number")
+      system_clock = clock
+    end
+
+    -- Local helper function for date validation
+    local function validate_is_date(val, claim, jwt_json)
+      ensure_is_non_negative(val, messages.wrong_type_claim, claim, "positive numeric value")
+      return true
+    end
+
+    -- Local helper for date formatting
+    local function format_date_on_error(date_check_function, error_msg)
+      ensure_is_type(date_check_function, "function", messages.wrong_type_validator, "function", "date_check_function")
+      ensure_is_type(error_msg, "string", messages.wrong_type_validator, "string", error_msg)
+      return function(val, claim, jwt_json)
+        local ret = date_check_function(val, claim, jwt_json)
+        if ret == false then
+          error(string.format("'%s' claim %s %s", claim, error_msg, ngx.http_time(val)), 0)
+        end
+        return true
+      end
+    end
+
+    --[[
+        Returns a validator that checks if the current time is not before the tested value
+        within the system's leeway.  This means that:
+          val <= (system_clock() + system_leeway).
+    ]]--
+    define_validator("is_not_before", function()
+      return format_date_on_error(
+         _M.chain(validate_is_date,
+            function(val)
+               return val and less_than_or_equal_function(val, (system_clock() + system_leeway))
+            end),
+         "not valid until"
+      )
+    end)
+
+
+    --[[
+        Returns a validator that checks if the current time is not equal to or after the
+        tested value within the system's leeway.  This means that:
+          val > (system_clock() - system_leeway).
+    ]]--
+    define_validator("is_not_expired", function()
+      return format_date_on_error(
+         _M.chain(validate_is_date,
+           function(val)
+              return val and greater_than_function(val, (system_clock() - system_leeway))
+           end),
+         "expired at"
+      )
+    end)
+
+    --[[
+        Returns a validator that checks if the current time is the same as the tested value
+        within the system's leeway.  This means that:
+          val >= (system_clock() - system_leeway) and val <= (system_clock() + system_leeway).
+    ]]--
+    define_validator("is_at", function()
+      local now = system_clock()
+      return format_date_on_error(
+        _M.chain(validate_is_date,
+                 function(val)
+                    local now = system_clock()
+                    return val and
+                       greater_than_or_equal_function(val, now - system_leeway) and
+                       less_than_or_equal_function(val, now + system_leeway)
+                 end),
+        "is only valid at"
+      )
+    end)
+
+
+    return _M
+  jwt.lua: |
+    local cjson = require "cjson.safe"
+
+    local evp = require "resty.evp"
+    local hmac = require "resty.hmac"
+    local resty_random = require "resty.random"
+    local cipher = require "resty.openssl.cipher"
+
+    local _M = { _VERSION = "0.2.3" }
+
+    local mt = {
+        __index = _M
+    }
+
+    local string_rep = string.rep
+    local string_format = string.format
+    local string_sub = string.sub
+    local string_char = string.char
+    local table_concat = table.concat
+    local ngx_encode_base64 = ngx.encode_base64
+    local ngx_decode_base64 = ngx.decode_base64
+    local cjson_encode = cjson.encode
+    local cjson_decode = cjson.decode
+    local tostring = tostring
+    local error = error
+    local ipairs = ipairs
+    local type = type
+    local pcall = pcall
+    local assert = assert
+    local setmetatable = setmetatable
+    local pairs = pairs
+
+    -- define string constants to avoid string garbage collection
+    local str_const = {
+      invalid_jwt= "invalid jwt string",
+      regex_join_msg = "%s.%s",
+      regex_join_delim = "([^%s]+)",
+      regex_split_dot = "%.",
+      regex_jwt_join_str = "%s.%s.%s",
+      raw_underscore  = "raw_",
+      dash = "-",
+      empty = "",
+      dotdot = "..",
+      table  = "table",
+      plus = "+",
+      equal = "=",
+      underscore = "_",
+      slash = "/",
+      header = "header",
+      typ = "typ",
+      JWT = "JWT",
+      JWE = "JWE",
+      payload = "payload",
+      signature = "signature",
+      encrypted_key = "encrypted_key",
+      alg = "alg",
+      enc = "enc",
+      kid = "kid",
+      exp = "exp",
+      nbf = "nbf",
+      iss = "iss",
+      full_obj = "__jwt",
+      x5c = "x5c",
+      x5u = 'x5u',
+      HS256 = "HS256",
+      HS512 = "HS512",
+      RS256 = "RS256",
+      ES256 = "ES256",
+      ES512 = "ES512",
+      RS512 = "RS512",
+      A128CBC_HS256 = "A128CBC-HS256",
+      A128CBC_HS256_CIPHER_MODE = "aes-128-cbc",
+      A256CBC_HS512 = "A256CBC-HS512",
+      A256CBC_HS512_CIPHER_MODE = "aes-256-cbc",
+      A256GCM = "A256GCM",
+      A256GCM_CIPHER_MODE = "aes-256-gcm",
+      RSA_OAEP_256 = "RSA-OAEP-256",
+      DIR = "dir",
+      reason = "reason",
+      verified = "verified",
+      number = "number",
+      string = "string",
+      funct = "function",
+      boolean = "boolean",
+      valid = "valid",
+      valid_issuers = "valid_issuers",
+      lifetime_grace_period = "lifetime_grace_period",
+      require_nbf_claim = "require_nbf_claim",
+      require_exp_claim = "require_exp_claim",
+      internal_error = "internal error",
+      everything_awesome = "everything is awesome~ :p"
+    }
+
+    -- @function split string
+    local function split_string(str, delim)
+      local result = {}
+      local sep = string_format(str_const.regex_join_delim, delim)
+      for m in str:gmatch(sep) do
+        result[#result+1]=m
+      end
+      return result
+    end
+
+    -- @function is nil or boolean
+    -- @return true if param is nil or true or false; false otherwise
+    local function is_nil_or_boolean(arg_value)
+        if arg_value == nil then
+            return true
+        end
+
+        if type(arg_value) ~= str_const.boolean then
+            return false
+        end
+
+        return true
+    end
+
+    --@function get the raw part
+    --@param part_name
+    --@param jwt_obj
+    local function get_raw_part(part_name, jwt_obj)
+      local raw_part = jwt_obj[str_const.raw_underscore .. part_name]
+      if raw_part == nil then
+        local part = jwt_obj[part_name]
+        if part == nil then
+          error({reason="missing part " .. part_name})
+        end
+        raw_part = _M:jwt_encode(part)
+      end
+      return raw_part
+    end
+
+
+    --@function decrypt payload
+    --@param secret_key to decrypt the payload
+    --@param encrypted payload
+    --@param encryption algorithm
+    --@param iv which was generated while encrypting the payload
+    --@param aad additional authenticated data (used when gcm mode is used)
+    --@param auth_tag authenticated tag (used when gcm mode is used)
+    --@return decrypted payloaf
+    local function decrypt_payload(secret_key, encrypted_payload, enc, iv_in, aad, auth_tag )
+      local decrypted_payload, err
+      if enc == str_const.A128CBC_HS256 then
+        local aes_128_cbs_cipher = assert(cipher.new(str_const.A128CBC_HS256_CIPHER_MODE))
+        decrypted_payload, err=  aes_128_cbs_cipher:decrypt(secret_key, iv_in, encrypted_payload)
+      elseif enc == str_const.A256CBC_HS512 then
+        local aes_256_cbs_cipher = assert(cipher.new(str_const.A256CBC_HS512_CIPHER_MODE))
+        decrypted_payload, err =  aes_256_cbs_cipher:decrypt(secret_key, iv_in, encrypted_payload)
+      elseif enc == str_const.A256GCM then
+        local aes_256_gcm_cipher = assert(cipher.new(str_const.A256GCM_CIPHER_MODE))
+        decrypted_payload, err =  aes_256_gcm_cipher:decrypt(secret_key, iv_in, encrypted_payload, false, aad, auth_tag)
+      else
+        return nil, "unsupported enc: " .. enc
+      end
+      if not  decrypted_payload or err then
+        return nil, err
+      end
+      return decrypted_payload
+    end
+
+    -- @function  encrypt payload using given secret
+    -- @param secret_key secret key to encrypt
+    -- @param message  data to be encrypted. It could be lua table or string
+    -- @param enc algorithm to use for encryption
+    -- @param aad additional authenticated data (used when gcm mode is used)
+    local function encrypt_payload(secret_key, message, enc, aad )
+
+      if enc == str_const.A128CBC_HS256 then
+        local iv_rand =  resty_random.bytes(16,true)
+        local aes_128_cbs_cipher = assert(cipher.new(str_const.A128CBC_HS256_CIPHER_MODE))
+        local encrypted = aes_128_cbs_cipher:encrypt(secret_key, iv_rand, message)
+        return encrypted, iv_rand
+
+      elseif enc == str_const.A256CBC_HS512 then
+        local iv_rand =  resty_random.bytes(16,true)
+        local aes_256_cbs_cipher = assert(cipher.new(str_const.A256CBC_HS512_CIPHER_MODE))
+        local encrypted = aes_256_cbs_cipher:encrypt(secret_key, iv_rand, message)
+        return encrypted, iv_rand
+
+      elseif enc == str_const.A256GCM then
+        local iv_rand =  resty_random.bytes(12,true) -- 96 bit IV is recommended for efficiency
+        local aes_256_gcm_cipher = assert(cipher.new(str_const.A256GCM_CIPHER_MODE))
+        local encrypted = aes_256_gcm_cipher:encrypt(secret_key, iv_rand, message, false, aad)
+        local auth_tag = assert(aes_256_gcm_cipher:get_aead_tag())
+        return encrypted, iv_rand, auth_tag
+
+      else
+        return nil, nil , nil, "unsupported enc: " .. enc
+      end
+    end
+
+    --@function hmac_digest : generate hmac digest based on key for input message
+    --@param mac_key
+    --@param input message
+    --@return hmac digest
+    local function hmac_digest(enc, mac_key, message)
+      if enc == str_const.A128CBC_HS256 then
+        return hmac:new(mac_key, hmac.ALGOS.SHA256):final(message)
+      elseif enc == str_const.A256CBC_HS512 then
+        return hmac:new(mac_key, hmac.ALGOS.SHA512):final(message)
+      else
+        error({reason="unsupported enc: " .. enc})
+      end
+    end
+
+    --@function dervice keys: it generates key if null based on encryption algorithm
+    --@param encryption type
+    --@param secret key
+    --@return secret key, mac key and encryption key
+    local function derive_keys(enc, secret_key)
+      local mac_key_len, enc_key_len = 16, 16
+
+      if enc == str_const.A256GCM then
+        mac_key_len, enc_key_len = 0, 32 -- we need 256 bit key
+      elseif enc == str_const.A128CBC_HS256 then
+        mac_key_len, enc_key_len = 16, 16
+      elseif enc == str_const.A256CBC_HS512 then
+        mac_key_len, enc_key_len = 32, 32
+      else
+        error({reason="unsupported payload encryption algorithm :" .. enc})
+      end
+
+      local secret_key_len = mac_key_len + enc_key_len
+
+      if not secret_key then
+        secret_key =  resty_random.bytes(secret_key_len, true)
+      end
+
+      if #secret_key ~= secret_key_len then
+        error({reason="invalid pre-shared key"})
+      end
+
+      local mac_key = string_sub(secret_key, 1, mac_key_len)
+      local enc_key = string_sub(secret_key, mac_key_len + 1)
+      return secret_key, mac_key, enc_key
+    end
+
+    local function get_payload_encoder(self)
+        return self.payload_encoder or cjson_encode
+    end
+
+    local function get_payload_decoder(self)
+        return self.payload_decoder or cjson_decode
+    end
+
+    --@function parse_jwe
+    --@param pre-shared key
+    --@encoded-header
+    local function parse_jwe(self, preshared_key, encoded_header, encoded_encrypted_key, encoded_iv, encoded_cipher_text, encoded_auth_tag)
+
+
+      local header = _M:jwt_decode(encoded_header, true)
+      if not header then
+        error({reason="invalid header: " .. encoded_header})
+      end
+
+      local alg = header.alg
+      if alg ~= str_const.DIR and alg ~= str_const.RSA_OAEP_256 then
+        error({reason="invalid algorithm: " .. alg})
+      end
+
+      local key, enc_key
+      if alg == str_const.DIR then
+        if not preshared_key  then
+            error({reason="preshared key must not be null"})
+        end
+        key, _, enc_key = derive_keys(header.enc, preshared_key)
+      elseif alg == str_const.RSA_OAEP_256 then
+        if not preshared_key  then
+            error({reason="rsa private key must not be null"})
+        end
+        local rsa_decryptor, err = evp.RSADecryptor:new(preshared_key, nil, evp.CONST.RSA_PKCS1_OAEP_PADDING, evp.CONST.SHA256_DIGEST)
+        if err then
+            error({reason="failed to create rsa object: ".. err})
+        end
+        local secret_key, err = rsa_decryptor:decrypt(_M:jwt_decode(encoded_encrypted_key))
+        if err or not secret_key then
+           error({reason="failed to decrypt key: " .. err})
+        end
+        key, _, enc_key = derive_keys(header.enc, secret_key)
+      end
+
+      local cipher_text = _M:jwt_decode(encoded_cipher_text)
+      local iv =  _M:jwt_decode(encoded_iv)
+      local signature_or_tag = _M:jwt_decode(encoded_auth_tag)
+      local basic_jwe = {
+        typ = str_const.JWE,
+        internal = {
+          encoded_header = encoded_header,
+          cipher_text = cipher_text,
+          key = key,
+          iv = iv
+        },
+        header = header,
+        signature = signature_or_tag
+      }
+
+      local payload, err = decrypt_payload(enc_key, cipher_text, header.enc, iv, encoded_header, signature_or_tag)
+      if err  then
+        error({reason="failed to decrypt payload: " .. err})
+
+      else
+        basic_jwe.payload = get_payload_decoder(self)(payload)
+        basic_jwe.internal.json_payload=payload
+      end
+      return basic_jwe
+    end
+
+    -- @function parse_jwt
+    -- @param encoded header
+    -- @param encoded
+    -- @param signature
+    -- @return jwt table
+    local function parse_jwt(encoded_header, encoded_payload, signature)
+      local header = _M:jwt_decode(encoded_header, true)
+      if not header then
+        error({reason="invalid header: " .. encoded_header})
+      end
+
+      local payload = _M:jwt_decode(encoded_payload, true)
+      if not payload then
+        error({reason="invalid payload: " .. encoded_payload})
+      end
+
+      local basic_jwt = {
+        typ = str_const.JWT,
+        raw_header=encoded_header,
+        raw_payload=encoded_payload,
+        header=header,
+        payload=payload,
+        signature=signature
+      }
+      return basic_jwt
+
+    end
+
+    -- @function parse token - this can be JWE or JWT token
+    -- @param token string
+    -- @return jwt/jwe tables
+    local function parse(self, secret, token_str)
+      local tokens = split_string(token_str, str_const.regex_split_dot)
+      local num_tokens = #tokens
+      if num_tokens == 3 then
+        return  parse_jwt(tokens[1], tokens[2], tokens[3])
+      elseif num_tokens == 4  then
+        return parse_jwe(self, secret, tokens[1], nil, tokens[2], tokens[3],  tokens[4])
+      elseif num_tokens == 5 then
+        return parse_jwe(self, secret, tokens[1], tokens[2], tokens[3],  tokens[4], tokens[5])
+      else
+        error({reason=str_const.invalid_jwt})
+      end
+    end
+
+    --@function jwt encode : it converts into base64 encoded string. if input is a table, it convets into
+    -- json before converting to base64 string
+    --@param payloaf
+    --@return base64 encoded payloaf
+    function _M.jwt_encode(self, ori, is_payload)
+      if type(ori) == str_const.table then
+        ori = is_payload and get_payload_encoder(self)(ori) or cjson_encode(ori)
+      end
+      local res = ngx_encode_base64(ori):gsub(str_const.plus, str_const.dash):gsub(str_const.slash, str_const.underscore):gsub(str_const.equal, str_const.empty)
+      return res
+    end
+
+
+
+    --@function jwt decode : decode bas64 encoded string
+    function _M.jwt_decode(self, b64_str, json_decode, is_payload)
+      b64_str = b64_str:gsub(str_const.dash, str_const.plus):gsub(str_const.underscore, str_const.slash)
+
+      local reminder = #b64_str % 4
+      if reminder > 0 then
+        b64_str = b64_str .. string_rep(str_const.equal, 4 - reminder)
+      end
+      local data = ngx_decode_base64(b64_str)
+      if not data then
+        return nil
+      end
+      if json_decode then
+        data = is_payload and get_payload_decoder(self)(data) or cjson_decode(data)
+      end
+      return data
+    end
+
+    --- Initialize the trusted certs
+    -- During RS256 verify, we'll make sure the
+    -- cert was signed by one of these
+    function _M.set_trusted_certs_file(self, filename)
+      self.trusted_certs_file = filename
+    end
+    _M.trusted_certs_file = nil
+
+    --- Set a whitelist of allowed algorithms
+    -- E.g., jwt:set_alg_whitelist({RS256=1,HS256=1})
+    --
+    -- @param algorithms - A table with keys for the supported algorithms
+    --                     If the table is non-nil, during
+    --                     verify, the alg must be in the table
+    function _M.set_alg_whitelist(self, algorithms)
+      self.alg_whitelist = algorithms
+    end
+
+    _M.alg_whitelist = nil
+
+
+    --- Returns the list of default validations that will be
+    --- applied upon the verification of a jwt.
+    function _M.get_default_validation_options(self, jwt_obj)
+      return {
+        [str_const.require_exp_claim]=jwt_obj[str_const.payload].exp ~= nil,
+        [str_const.require_nbf_claim]=jwt_obj[str_const.payload].nbf ~= nil
+      }
+    end
+
+    --- Set a function used to retrieve the content of x5u urls
+    --
+    -- @param retriever_function - A pointer to a function. This function should be
+    --                             defined to accept three string parameters. First one
+    --                             will be the value of the 'x5u' attribute. Second
+    --                             one will be the value of the 'iss' attribute, would
+    --                             it be defined in the jwt. Third one will be the value
+    --                             of the 'iss' attribute, would it be defined in the jwt.
+    --                             This function should return the matching certificate.
+    function _M.set_x5u_content_retriever(self, retriever_function)
+      if type(retriever_function) ~= str_const.funct then
+        error("'retriever_function' is expected to be a function", 0)
+      end
+      self.x5u_content_retriever = retriever_function
+    end
+
+    _M.x5u_content_retriever = nil
+
+    -- https://tools.ietf.org/html/rfc7516#appendix-B.3
+    -- TODO: do it in lua way
+    local function binlen(s)
+      if type(s) ~= 'string' then return end
+
+      local len = 8 * #s
+
+      return string_char(len / 0x0100000000000000 % 0x100)
+          .. string_char(len / 0x0001000000000000 % 0x100)
+          .. string_char(len / 0x0000010000000000 % 0x100)
+          .. string_char(len / 0x0000000100000000 % 0x100)
+          .. string_char(len / 0x0000000001000000 % 0x100)
+          .. string_char(len / 0x0000000000010000 % 0x100)
+          .. string_char(len / 0x0000000000000100 % 0x100)
+          .. string_char(len / 0x0000000000000001 % 0x100)
+    end
+
+    --@function sign jwe payload
+    --@param secret key : if used pre-shared or RSA key
+    --@param  jwe payload
+    --@return jwe token
+    local function sign_jwe(self, secret_key, jwt_obj)
+      local header = jwt_obj.header
+      local enc = header.enc
+      local alg = header.alg
+
+      -- remove type
+      if header.typ then
+        header.typ = nil
+      end
+
+      -- TODO: implement logic for creating enc key and mac key and then encrypt key
+      local key, encrypted_key, mac_key, enc_key
+      local encoded_header = _M:jwt_encode(header)
+      local payload_to_encrypt = get_payload_encoder(self)(jwt_obj.payload)
+      if alg ==  str_const.DIR then
+        _, mac_key, enc_key = derive_keys(enc, secret_key)
+        encrypted_key = ""
+      elseif alg == str_const.RSA_OAEP_256 then
+        local cert, err
+        if secret_key:find("CERTIFICATE") then
+            cert, err = evp.Cert:new(secret_key)
+        elseif secret_key:find("PUBLIC KEY") then
+            cert, err = evp.PublicKey:new(secret_key)
+        end
+        if not cert then
+            error({reason="Decode secret is not a valid cert/public key: " .. (err and err or secret_key)})
+        end
+        local rsa_encryptor = evp.RSAEncryptor:new(cert, evp.CONST.RSA_PKCS1_OAEP_PADDING, evp.CONST.SHA256_DIGEST)
+        if err then
+            error("failed to create rsa object for encryption ".. err)
+        end
+        key, mac_key, enc_key = derive_keys(enc)
+        encrypted_key, err = rsa_encryptor:encrypt(key)
+        if err or not encrypted_key then
+            error({reason="failed to encrypt key " .. (err or "")})
+        end
+      else
+        error({reason="unsupported alg: " .. alg})
+      end
+
+      local cipher_text, iv, auth_tag, err = encrypt_payload(enc_key, payload_to_encrypt, enc, encoded_header)
+      if err then
+        error({reason="error while encrypting payload. Error: " .. err})
+      end
+
+      if not auth_tag then
+        local encoded_header_length = binlen(encoded_header)
+        local mac_input = table_concat({encoded_header , iv, cipher_text , encoded_header_length})
+        local mac = hmac_digest(enc, mac_key, mac_input)
+        auth_tag = string_sub(mac, 1, #mac/2)
+      end
+
+      local jwe_table = {encoded_header, _M:jwt_encode(encrypted_key), _M:jwt_encode(iv),
+        _M:jwt_encode(cipher_text),   _M:jwt_encode(auth_tag)}
+      return table_concat(jwe_table, ".", 1, 5)
+    end
+
+    --@function get_secret_str  : returns the secret if it is a string, or the result of a function
+    --@param either the string secret or a function that takes a string parameter and returns a string or nil
+    --@param  jwt payload
+    --@return the secret as a string or as a function
+    local function get_secret_str(secret_or_function, jwt_obj)
+      if type(secret_or_function) == str_const.funct then
+        -- Only use with hmac algorithms
+        local alg = jwt_obj[str_const.header][str_const.alg]
+        if alg ~= str_const.HS256 and alg ~= str_const.HS512 then
+          error({reason="secret function can only be used with hmac alg: " .. alg})
+        end
+
+        -- Pull out the kid value from the header
+        local kid_val = jwt_obj[str_const.header][str_const.kid]
+        if kid_val == nil then
+          error({reason="secret function specified without kid in header"})
+        end
+
+        -- Call the function
+        return secret_or_function(kid_val) or error({reason="function returned nil for kid: " .. kid_val})
+      elseif type(secret_or_function) == str_const.string then
+        -- Just return the string
+        return secret_or_function
+      else
+        -- Throw an error
+        error({reason="invalid secret type (must be string or function)"})
+      end
+    end
+
+    --@function sign  : create a jwt/jwe signature from jwt_object
+    --@param secret key
+    --@param jwt/jwe payload
+    function _M.sign(self, secret_key, jwt_obj)
+      -- header typ check
+      local typ = jwt_obj[str_const.header][str_const.typ]
+      -- Optional header typ check [See http://tools.ietf.org/html/draft-ietf-oauth-json-web-token-25#section-5.1]
+      if typ ~= nil then
+        if typ ~= str_const.JWT and typ ~= str_const.JWE then
+          error({reason="invalid typ: " .. typ})
+        end
+      end
+
+      if jwt_obj.typ == str_const.JWE or (jwt_obj.typ == nil and (typ == str_const.JWE or jwt_obj.header.enc)) then
+        return sign_jwe(self, secret_key, jwt_obj)
+      end
+      -- header alg check
+      local raw_header = get_raw_part(str_const.header, jwt_obj)
+      local raw_payload = get_raw_part(str_const.payload, jwt_obj)
+      local message = string_format(str_const.regex_join_msg, raw_header, raw_payload)
+      local alg = jwt_obj[str_const.header][str_const.alg]
+      local signature = ""
+      if alg == str_const.HS256 then
+        local secret_str = get_secret_str(secret_key, jwt_obj)
+        signature = hmac:new(secret_str, hmac.ALGOS.SHA256):final(message)
+      elseif alg == str_const.HS512 then
+        local secret_str = get_secret_str(secret_key, jwt_obj)
+        signature = hmac:new(secret_str, hmac.ALGOS.SHA512):final(message)
+      elseif alg == str_const.RS256 or alg == str_const.RS512 then
+        local signer, err = evp.RSASigner:new(secret_key)
+        if not signer then
+          error({reason="signer error: " .. err})
+        end
+        if alg == str_const.RS256 then
+          signature = signer:sign(message, evp.CONST.SHA256_DIGEST)
+        elseif alg == str_const.RS512 then
+          signature = signer:sign(message, evp.CONST.SHA512_DIGEST)
+        end
+      elseif alg == str_const.ES256 or alg == str_const.ES512 then
+        local signer, err = evp.ECSigner:new(secret_key)
+        if not signer then
+          error({reason="signer error: " .. err})
+        end
+        -- OpenSSL will generate a DER encoded signature that needs to be converted
+        local der_signature = ""
+        if alg == str_const.ES256 then
+          der_signature = signer:sign(message, evp.CONST.SHA256_DIGEST)
+        elseif alg == str_const.ES512 then
+          der_signature = signer:sign(message, evp.CONST.SHA512_DIGEST)
+        end
+        -- Perform DER to RAW signature conversion
+        signature, err = signer:get_raw_sig(der_signature)
+        if not signature then
+          error({reason="signature error: " .. err})
+        end
+      else
+        error({reason="unsupported alg: " .. alg})
+      end
+      -- return full jwt string
+      return string_format(str_const.regex_join_msg, message , _M:jwt_encode(signature))
+
+    end
+
+    --@function load jwt
+    --@param jwt string token
+    --@param secret
+    function _M.load_jwt(self, jwt_str, secret)
+      local success, ret = pcall(parse, self, secret, jwt_str)
+      if not success then
+        return {
+          valid=false,
+          verified=false,
+          reason=ret[str_const.reason] or str_const.invalid_jwt
+        }
+      end
+
+      local jwt_obj = ret
+      jwt_obj[str_const.verified] = false
+      jwt_obj[str_const.valid] = true
+      return jwt_obj
+    end
+
+    --@function verify jwe object
+    --@param jwt object
+    --@return jwt object with reason whether verified or not
+    local function verify_jwe_obj(jwt_obj)
+
+      if jwt_obj[str_const.header][str_const.enc]  ~= str_const.A256GCM then -- tag gets authenticated during decryption
+        local _, mac_key, _ = derive_keys(jwt_obj.header.enc, jwt_obj.internal.key)
+        local encoded_header = jwt_obj.internal.encoded_header
+
+        local encoded_header_length = binlen(encoded_header)
+        local mac_input = table_concat({encoded_header , jwt_obj.internal.iv, jwt_obj.internal.cipher_text,
+                                        encoded_header_length})
+        local mac = hmac_digest(jwt_obj.header.enc, mac_key,  mac_input)
+        local auth_tag = string_sub(mac, 1, #mac/2)
+
+        if auth_tag ~= jwt_obj.signature then
+          jwt_obj[str_const.reason] = "signature mismatch: " ..
+          tostring(jwt_obj[str_const.signature])
+        end
+      end
+
+      jwt_obj.internal = nil
+      jwt_obj.signature = nil
+
+      if not jwt_obj[str_const.reason] then
+        jwt_obj[str_const.verified] = true
+        jwt_obj[str_const.reason] = str_const.everything_awesome
+      end
+
+      return jwt_obj
+    end
+
+    --@function extract certificate
+    --@param jwt object
+    --@return decoded certificate
+    local function extract_certificate(jwt_obj, x5u_content_retriever)
+      local x5c = jwt_obj[str_const.header][str_const.x5c]
+      if x5c ~= nil and x5c[1] ~= nil then
+        -- TODO Might want to add support for intermediaries that we
+        -- don't have in our trusted chain (items 2... if present)
+
+        local cert_str = ngx_decode_base64(x5c[1])
+        if not cert_str then
+          jwt_obj[str_const.reason] = "Malformed x5c header"
+        end
+
+        return cert_str
+      end
+
+      local x5u = jwt_obj[str_const.header][str_const.x5u]
+      if x5u ~= nil then
+        -- TODO Ensure the url starts with https://
+        -- cf. https://tools.ietf.org/html/rfc7517#section-4.6
+
+        if x5u_content_retriever == nil then
+          jwt_obj[str_const.reason] = "No function has been provided to retrieve the content pointed at by the 'x5u'."
+          return nil
+        end
+
+        -- TODO Maybe validate the url against an optional list whitelisted url prefixes?
+        -- cf. https://news.ycombinator.com/item?id=9302394
+
+        local iss = jwt_obj[str_const.payload][str_const.iss]
+        local kid = jwt_obj[str_const.header][str_const.kid]
+        local success, ret = pcall(x5u_content_retriever, x5u, iss, kid)
+
+        if not success then
+          jwt_obj[str_const.reason] = "An error occured while invoking the x5u_content_retriever function."
+          return nil
+        end
+
+        return ret
+      end
+
+      -- TODO When both x5c and x5u are defined, the implementation should
+      -- ensure their content match
+      -- cf. https://tools.ietf.org/html/rfc7517#section-4.6
+
+      jwt_obj[str_const.reason] = "Unsupported RS256 key model"
+      return nil
+      -- TODO - Implement jwk and kid based models...
+    end
+
+    local function get_claim_spec_from_legacy_options(self, options)
+      local claim_spec = { }
+      local jwt_validators = require "resty.jwt-validators"
+
+      if options[str_const.valid_issuers] ~= nil then
+        claim_spec[str_const.iss] = jwt_validators.equals_any_of(options[str_const.valid_issuers])
+      end
+
+      if options[str_const.lifetime_grace_period] ~= nil then
+        jwt_validators.set_system_leeway(options[str_const.lifetime_grace_period] or 0)
+
+        -- If we have a leeway set, then either an NBF or an EXP should also exist requireds are added below
+        if options[str_const.require_nbf_claim] ~= true and options[str_const.require_exp_claim] ~= true then
+          claim_spec[str_const.full_obj] = jwt_validators.require_one_of({ str_const.nbf, str_const.exp })
+        end
+      end
+
+      if not is_nil_or_boolean(options[str_const.require_nbf_claim]) then
+        error(string.format("'%s' validation option is expected to be a boolean.", str_const.require_nbf_claim), 0)
+      end
+
+      if not is_nil_or_boolean(options[str_const.require_exp_claim]) then
+        error(string.format("'%s' validation option is expected to be a boolean.", str_const.require_exp_claim), 0)
+      end
+
+      if options[str_const.lifetime_grace_period] ~= nil or options[str_const.require_nbf_claim] ~= nil or options[str_const.require_exp_claim] ~= nil then
+        if options[str_const.require_nbf_claim] == true then
+          claim_spec[str_const.nbf] = jwt_validators.is_not_before()
+        else
+          claim_spec[str_const.nbf] = jwt_validators.opt_is_not_before()
+        end
+
+        if options[str_const.require_exp_claim] == true then
+          claim_spec[str_const.exp] = jwt_validators.is_not_expired()
+        else
+          claim_spec[str_const.exp] = jwt_validators.opt_is_not_expired()
+        end
+      end
+
+      return claim_spec
+    end
+
+    local function is_legacy_validation_options(options)
+
+      -- Validation options MUST be a table
+      if type(options) ~= str_const.table then
+        return false
+      end
+
+      -- Validation options MUST have at least one of these, and must ONLY have these
+      local legacy_options = { }
+      legacy_options[str_const.valid_issuers]=1
+      legacy_options[str_const.lifetime_grace_period]=1
+      legacy_options[str_const.require_nbf_claim]=1
+      legacy_options[str_const.require_exp_claim]=1
+
+      local is_legacy = false
+      for k in pairs(options) do
+        if legacy_options[k] ~= nil then
+          is_legacy = true
+        else
+          return false
+        end
+      end
+      return is_legacy
+    end
+
+    -- Validates the claims for the given (parsed) object
+    local function validate_claims(self, jwt_obj, ...)
+      local claim_specs = {...}
+      if #claim_specs == 0 then
+        table.insert(claim_specs, _M:get_default_validation_options(jwt_obj))
+      end
+
+      if jwt_obj[str_const.reason] ~= nil then
+        return false
+      end
+
+      -- Encode the current jwt_obj and use it when calling the individual validation functions
+      local jwt_json = cjson_encode(jwt_obj)
+
+      -- Validate all our specs
+      for _, claim_spec in ipairs(claim_specs) do
+        if is_legacy_validation_options(claim_spec) then
+          claim_spec = get_claim_spec_from_legacy_options(self, claim_spec)
+        end
+        for claim, fx in pairs(claim_spec) do
+          if type(fx) ~= str_const.funct then
+            error("Claim spec value must be a function - see jwt-validators.lua for helper functions", 0)
+          end
+
+          local val = claim == str_const.full_obj and cjson_decode(jwt_json) or jwt_obj.payload[claim]
+          local success, ret = pcall(fx, val, claim, jwt_json)
+          if not success then
+            jwt_obj[str_const.reason] = ret.reason or string.gsub(ret, "^.-:%d-: ", "")
+            return false
+          elseif ret == false then
+            jwt_obj[str_const.reason] = string.format("Claim '%s' ('%s') returned failure", claim, val)
+            return false
+          end
+        end
+      end
+
+      -- Everything was good
+      return true
+    end
+
+    --@function verify jwt object
+    --@param secret
+    --@param jwt_object
+    --@leeway
+    --@return verified jwt payload or jwt object with error code
+    function _M.verify_jwt_obj(self, secret, jwt_obj, ...)
+      if not jwt_obj.valid then
+        return jwt_obj
+      end
+
+      -- validate any claims that have been passed in
+      if not validate_claims(self, jwt_obj, ...) then
+        return jwt_obj
+      end
+
+      -- if jwe, invoked verify jwe
+      if jwt_obj.typ == str_const.JWE or (jwt_obj.typ == nil and jwt_obj.internal ~= nil and jwt_obj[str_const.header][str_const.enc]) then
+        return verify_jwe_obj(jwt_obj)
+      end
+
+      local alg = jwt_obj[str_const.header][str_const.alg]
+
+      if alg == nil then
+        jwt_obj[str_const.reason] = "No algorithm supplied"
+        return jwt_obj
+      end
+
+      local jwt_str = string_format(str_const.regex_jwt_join_str, jwt_obj.raw_header , jwt_obj.raw_payload , jwt_obj.signature)
+
+      if self.alg_whitelist ~= nil then
+        if self.alg_whitelist[alg] == nil then
+          return {verified=false, reason="whitelist unsupported alg: " .. alg}
+        end
+      end
+
+      if alg == str_const.HS256 or alg == str_const.HS512 then
+        local success, ret = pcall(_M.sign, self, secret, jwt_obj)
+        if not success then
+          -- syntax check
+          jwt_obj[str_const.reason] = ret[str_const.reason] or str_const.internal_error
+        elseif jwt_str ~= ret then
+          -- signature check
+          jwt_obj[str_const.reason] = "signature mismatch: " .. jwt_obj[str_const.signature]
+        end
+      elseif alg == str_const.RS256 or alg == str_const.RS512 or alg == str_const.ES256 or alg == str_const.ES512 then
+        local cert, err
+        if self.trusted_certs_file ~= nil then
+          local cert_str = extract_certificate(jwt_obj, self.x5u_content_retriever)
+          if not cert_str then
+            return jwt_obj
+          end
+          cert, err = evp.Cert:new(cert_str)
+          if not cert then
+            jwt_obj[str_const.reason] = "Unable to extract signing cert from JWT: " .. err
+            return jwt_obj
+          end
+          -- Try validating against trusted CA's, then a cert passed as secret
+          local trusted = cert:verify_trust(self.trusted_certs_file)
+          if not trusted then
+            jwt_obj[str_const.reason] = "Cert used to sign the JWT isn't trusted: " .. err
+            return jwt_obj
+          end
+        elseif secret ~= nil then
+          if secret:find("CERTIFICATE") then
+            cert, err = evp.Cert:new(secret)
+          elseif secret:find("PUBLIC KEY") then
+            cert, err = evp.PublicKey:new(secret)
+          end
+          if not cert then
+            jwt_obj[str_const.reason] = "Decode secret is not a valid cert/public key"
+            return jwt_obj
+          end
+        else
+          jwt_obj[str_const.reason] = "No trusted certs loaded"
+          return jwt_obj
+        end
+        local verifier = ''
+        if alg == str_const.RS256 or alg == str_const.RS512 then
+          verifier = evp.RSAVerifier:new(cert)
+        elseif alg == str_const.ES256 or alg == str_const.ES512 then
+          verifier = evp.ECVerifier:new(cert)
+        end
+        if not verifier then
+          -- Internal error case, should not happen...
+          jwt_obj[str_const.reason] = "Failed to build verifier " .. err
+          return jwt_obj
+        end
+
+        -- assemble jwt parts
+        local raw_header = get_raw_part(str_const.header, jwt_obj)
+        local raw_payload = get_raw_part(str_const.payload, jwt_obj)
+
+        local message =string_format(str_const.regex_join_msg, raw_header ,  raw_payload)
+        local sig = _M:jwt_decode(jwt_obj[str_const.signature], false)
+
+        if not sig then
+          jwt_obj[str_const.reason] = "Wrongly encoded signature"
+          return jwt_obj
+        end
+
+        local verified = false
+        err = "verify error: reason unknown"
+
+        if alg == str_const.RS256 or alg == str_const.ES256 then
+          verified, err = verifier:verify(message, sig, evp.CONST.SHA256_DIGEST)
+        elseif alg == str_const.RS512 or alg == str_const.ES512 then
+          verified, err = verifier:verify(message, sig, evp.CONST.SHA512_DIGEST)
+        end
+        if not verified then
+          jwt_obj[str_const.reason] = err
+        end
+      else
+        jwt_obj[str_const.reason] = "Unsupported algorithm " .. alg
+      end
+
+      if not jwt_obj[str_const.reason] then
+        jwt_obj[str_const.verified] = true
+        jwt_obj[str_const.reason] = str_const.everything_awesome
+      end
+      return jwt_obj
+
+    end
+
+
+    function _M.verify(self, secret, jwt_str, ...)
+      local jwt_obj = _M.load_jwt(self, jwt_str, secret)
+      if not jwt_obj.valid then
+        return {verified=false, reason=jwt_obj[str_const.reason]}
+      end
+      return  _M.verify_jwt_obj(self, secret, jwt_obj, ...)
+
+    end
+
+    function _M.set_payload_encoder(self, encoder)
+      if type(encoder) ~= "function" then
+        error({reason="payload encoder must be function"})
+      end
+      self.payload_encoder = encoder
+    end
+
+
+    function _M.set_payload_decoder(self, decoder)
+      if type(decoder) ~= "function" then
+        error({reason="payload decoder must be function"})
+      end
+      self.payload_decoder= decoder
+    end
+
+
+    function _M.new()
+        return setmetatable({}, mt)
+    end
+
+    return _M
+kind: ConfigMap
+metadata:
+  creationTimestamp: null
+  name: kong-oidc-resty-plugin
+  namespace: kong-gateway
