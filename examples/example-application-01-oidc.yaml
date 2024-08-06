@@ -5,12 +5,12 @@ metadata:
  namespace: application-01
 plugin: oidc
 config:
-  discovery: https://cunicodc.westeurope.cloudapp.azure.com/adfs/.well-known/openid-configuration
+  discovery: <discovery>
   bearer_only: "yes"
-  introspection_endpoint: https://cunicodc.westeurope.cloudapp.azure.com/adfs/oauth2/token/
+  introspection_endpoint: <introspection_endpoint>
   introspection_endpoint_auth_method: client_secret_post
   use_jwks: "yes"
-  client_id: microsoft:identityserver:dd44075b-6f95-4b37-b2ff-5138e7dd1794
+  client_id: <client id>
   validate_scope: "false"
   bearer_jwt_auth_enable: "no"
   access_token_header_name: Authorization
